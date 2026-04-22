@@ -34,6 +34,12 @@ Install `ffmpeg` and `ffprobe`, then start the app:
 uvicorn app.main:app --reload
 ```
 
+Or use the short command:
+
+```bash
+make dev
+```
+
 To enable the transcription and video tools in the web app, also install the media stacks:
 
 ```bash
@@ -80,6 +86,7 @@ The upload endpoints accept `multipart/form-data`.
 - `requirements-audio.txt` for `wishperx.py` and transcript generation.
 - `requirements-video.txt` for `vad_pause_editor.py` and the shrink-video pipeline.
 - `requirements.txt` as a full-stack umbrella install.
+- `Makefile` provides short commands like `make dev` and `make install-all`.
 
 ## Notes
 
