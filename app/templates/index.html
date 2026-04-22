@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="stack">
+    <span class="pill">Workflow hub</span>
+    <h2>Upload media, generate transcripts, and ship the result.</h2>
+    <p>
+      This workspace starts with two tools and is set up to absorb more scripts later without
+      changing the navigation model.
+    </p>
+  </div>
+</section>
+
+<section class="grid">
+  {% for tool in tools %}
+    <a class="panel tool-link" href="/tools/{{ tool.slug }}">
+      <div class="status {{ tool.status }}">{{ tool.status }}</div>
+      <h3>{{ tool.title }}</h3>
+      <p>{{ tool.description }}</p>
+      <div class="foot">
+        {% if tool.status == "active" %}
+          <span class="btn secondary">Open tool</span>
+        {% else %}
+          <span class="pill">Planned</span>
+        {% endif %}
+      </div>
+    </a>
+  {% endfor %}
+</section>
+{% endblock %}
+

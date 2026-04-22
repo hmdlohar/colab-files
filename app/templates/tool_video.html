@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <section class="panel">
+    <div class="stack">
+      <span class="pill">Tool 2</span>
+      <h2 style="margin: 0">Video to Shrinked Video</h2>
+      <p class="muted">
+        Upload a video, extract a transcript, and render a shorter output video plus transcript.
+      </p>
+    </div>
+
+    <form class="form" action="/tools/video-to-shrinked-video" method="post" enctype="multipart/form-data">
+      <div class="field">
+        <label for="video_file">Video file</label>
+        <input id="video_file" name="video_file" type="file" accept="video/*" required />
+      </div>
+
+      <div class="field">
+        <label for="model_name">Whisper model</label>
+        <input id="model_name" name="model_name" type="text" value="collabora/whisper-base-hindi" />
+      </div>
+
+      <div class="field">
+        <label for="language_code">Language code</label>
+        <input id="language_code" name="language_code" type="text" value="hi" />
+      </div>
+
+      <details>
+        <summary>Advanced timing controls</summary>
+        <div class="grid" style="margin-top: 14px">
+          <div class="field">
+            <label for="vad_threshold">VAD threshold</label>
+            <input id="vad_threshold" name="vad_threshold" type="number" step="0.01" min="0.1" max="0.99" value="0.5" />
+          </div>
+          <div class="field">
+            <label for="pad_before_ms">Pad before speech, ms</label>
+            <input id="pad_before_ms" name="pad_before_ms" type="number" value="120" />
+          </div>
+          <div class="field">
+            <label for="pad_after_ms">Pad after speech, ms</label>
+            <input id="pad_after_ms" name="pad_after_ms" type="number" value="180" />
+          </div>
+          <div class="field">
+            <label for="merge_gap_ms">Merge gap, ms</label>
+            <input id="merge_gap_ms" name="merge_gap_ms" type="number" value="200" />
+          </div>
+          <div class="field">
+            <label for="leading_keep_ms">Leading keep, ms</label>
+            <input id="leading_keep_ms" name="leading_keep_ms" type="number" value="150" />
+          </div>
+          <div class="field">
+            <label for="trailing_keep_ms">Trailing keep, ms</label>
+            <input id="trailing_keep_ms" name="trailing_keep_ms" type="number" value="200" />
+          </div>
+          <div class="field">
+            <label for="preserve_short_pause_ms">Preserve short pause, ms</label>
+            <input id="preserve_short_pause_ms" name="preserve_short_pause_ms" type="number" value="250" />
+          </div>
+          <div class="field">
+            <label for="long_pause_step_ms">Long pause step, ms</label>
+            <input id="long_pause_step_ms" name="long_pause_step_ms" type="number" value="150" />
+          </div>
+          <div class="field">
+            <label for="long_pause_step_every_ms">Step every, ms</label>
+            <input id="long_pause_step_every_ms" name="long_pause_step_every_ms" type="number" value="1000" />
+          </div>
+          <div class="field">
+            <label for="max_keep_silence_ms">Max keep silence, ms</label>
+            <input id="max_keep_silence_ms" name="max_keep_silence_ms" type="number" value="450" />
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Transcript-driven cut options</summary>
+        <div class="grid" style="margin-top: 14px">
+          <div class="field" style="grid-column: 1 / -1">
+            <label for="filler_words">Filler words</label>
+            <textarea id="filler_words" name="filler_words">अः,um,uh,umm,uhh,hmm,mmm</textarea>
+          </div>
+          <div class="field">
+            <label for="filler_pad_before_ms">Filler pad before, ms</label>
+            <input id="filler_pad_before_ms" name="filler_pad_before_ms" type="number" value="40" />
+          </div>
+          <div class="field">
+            <label for="filler_pad_after_ms">Filler pad after, ms</label>
+            <input id="filler_pad_after_ms" name="filler_pad_after_ms" type="number" value="60" />
+          </div>
+        </div>
+      </details>
+
+      <div class="field">
+        <label for="chunk_length_s">Chunk length, seconds</label>
+        <input id="chunk_length_s" name="chunk_length_s" type="number" min="5" max="120" value="30" />
+      </div>
+
+      <div class="field">
+        <label for="video_preset">Video preset</label>
+        <input id="video_preset" name="video_preset" type="text" value="fast" />
+      </div>
+
+      <div class="field">
+        <label for="video_crf">Video CRF</label>
+        <input id="video_crf" name="video_crf" type="number" value="23" />
+      </div>
+
+      <div class="field">
+        <label for="audio_bitrate">Audio bitrate</label>
+        <input id="audio_bitrate" name="audio_bitrate" type="text" value="128k" />
+      </div>
+
+      <div class="toolbar">
+        <button class="btn" type="submit">Start shrink job</button>
+        <a class="btn secondary" href="/">Back to tools</a>
+      </div>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h3>Output</h3>
+    <div class="stack">
+      <div class="artifact">
+        <div>
+          <strong>Transcript</strong>
+          <div><span>JSON with word timestamps for reuse in other scripts</span></div>
+        </div>
+      </div>
+      <div class="artifact">
+        <div>
+          <strong>Final video</strong>
+          <div><span>Shortened cut rendered with the VAD editor</span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+

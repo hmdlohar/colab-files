@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <section class="panel">
+    <div class="stack">
+      <span class="pill">Tool 1</span>
+      <h2 style="margin: 0">Audio to Transcript</h2>
+      <p class="muted">Upload audio and get a downloadable `transcript.json` plus the normalized WAV.</p>
+    </div>
+
+    <form class="form" action="/tools/audio-to-transcript" method="post" enctype="multipart/form-data">
+      <div class="field">
+        <label for="audio_file">Audio file</label>
+        <input id="audio_file" name="audio_file" type="file" accept="audio/*" required />
+      </div>
+      <div class="field">
+        <label for="model_name">Whisper model</label>
+        <input id="model_name" name="model_name" type="text" value="collabora/whisper-base-hindi" />
+      </div>
+      <div class="field">
+        <label for="language_code">Language code</label>
+        <input id="language_code" name="language_code" type="text" value="hi" />
+      </div>
+      <div class="field">
+        <label for="chunk_length_s">Chunk length, seconds</label>
+        <input id="chunk_length_s" name="chunk_length_s" type="number" min="5" max="120" value="30" />
+      </div>
+      <div class="toolbar">
+        <button class="btn" type="submit">Start transcription</button>
+        <a class="btn secondary" href="/">Back to tools</a>
+      </div>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h3>Output</h3>
+    <div class="stack">
+      <div class="artifact">
+        <div>
+          <strong>Transcript</strong>
+          <div><span>JSON with word-level timestamps</span></div>
+        </div>
+      </div>
+      <div class="artifact">
+        <div>
+          <strong>Normalized audio</strong>
+          <div><span>Mono 16 kHz WAV for downstream scripts</span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+

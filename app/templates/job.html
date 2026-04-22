@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="stack">
+    <span class="pill">{{ job.tool }}</span>
+    <h2 style="margin: 0">{{ job.message }}</h2>
+    <p class="muted">Job <strong>{{ job.id }}</strong> started from <strong>{{ job.input_name }}</strong>.</p>
+  </div>
+
+  <div class="grid" style="margin-top: 18px">
+    <div class="panel" style="box-shadow: none">
+      <div class="muted">Status</div>
+      <div style="font-size: 1.4rem; font-weight: 700" data-job-status>{{ job.status }}</div>
+      <div class="note" data-job-detail>{{ job.message }}</div>
+      {% if job.error %}
+        <div class="codebox" style="margin-top: 12px">{{ job.error }}</div>
+      {% endif %}
+    </div>
+    <div class="panel" style="box-shadow: none">
+      <div class="muted">Artifacts</div>
+      <div class="results" data-job-artifacts>
+        {% for artifact in job.artifacts %}
+          <div class="artifact">
+            <div>
+              <strong>{{ artifact.name }}</strong>
+              <div><span>{{ artifact.filename }}</span></div>
+            </div>
+            <a class="btn secondary" href="{{ artifact.download_url }}">Download</a>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+

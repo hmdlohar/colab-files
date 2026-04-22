@@ -20,6 +20,7 @@ dist/
 transcript.json
 transcription_with_timestamps.json
 *_16k_mono.wav
+runs/
 
 # Local environment files
 .env

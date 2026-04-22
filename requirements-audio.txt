@@ -1,0 +1,8 @@
+torch
+torchaudio
+transformers
+whisperx
+soundfile
+tqdm
+numpy
+
