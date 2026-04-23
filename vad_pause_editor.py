@@ -385,6 +385,43 @@ def concat_media_files(input_files: Sequence[str], output_path: str) -> None:
             pass
 
 
+def finalize_rendered_output(
+    intermediate_path: str,
+    output_path: str,
+    has_video: bool,
+    audio_bitrate: str,
+) -> None:
+    output_suffix = Path(output_path).suffix.lower()
+
+    if not has_video and output_suffix == ".wav":
+        cmd = ["ffmpeg", "-y", "-i", intermediate_path, "-c:a", "pcm_s16le", output_path]
+        run(cmd)
+        return
+
+    cmd = ["ffmpeg", "-y", "-i", intermediate_path]
+    if has_video:
+        cmd += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy"]
+        if output_suffix in {".mp4", ".m4v", ".mov", ".mkv", ".mka"}:
+            cmd += ["-c:a", "aac", "-b:a", audio_bitrate]
+        else:
+            cmd += ["-c:a", "aac", "-b:a", audio_bitrate]
+    else:
+        if output_suffix == ".flac":
+            cmd += ["-c:a", "flac"]
+        elif output_suffix == ".mp3":
+            cmd += ["-c:a", "libmp3lame", "-q:a", "2"]
+        elif output_suffix in {".ogg", ".opus"}:
+            cmd += ["-c:a", "libopus", "-b:a", audio_bitrate]
+        elif output_suffix == ".wav":
+            shutil.copy2(intermediate_path, output_path)
+            return
+        else:
+            cmd += ["-c:a", "aac", "-b:a", audio_bitrate]
+
+    cmd.append(output_path)
+    run(cmd)
+
+
 def render_segments(
     input_path: str,
     output_path: str,
@@ -402,13 +439,14 @@ def render_segments(
     if not has_video and not has_audio:
         raise ValueError("Input has neither audio nor video streams")
 
-    output_suffix = Path(output_path).suffix or (".mkv" if has_video else ".m4a")
     with tempfile.TemporaryDirectory(prefix="vad_pause_editor_render_") as tmpdir:
         segment_files: List[str] = []
         total = len(segments)
+        segment_suffix = ".mkv" if has_video else ".mka"
+        intermediate_path = os.path.join(tmpdir, f"concat{segment_suffix}")
 
         for index, segment in enumerate(segments):
-            segment_path = os.path.join(tmpdir, f"segment_{index:05d}{output_suffix}")
+            segment_path = os.path.join(tmpdir, f"segment_{index:05d}{segment_suffix}")
             duration = segment.duration
             if duration <= 0.02:
                 continue
@@ -431,7 +469,7 @@ def render_segments(
                 cmd += ["-vn"]
 
             if has_audio:
-                cmd += ["-c:a", "aac", "-b:a", audio_bitrate]
+                cmd += ["-c:a", "pcm_s16le"]
             else:
                 cmd += ["-an"]
 
@@ -442,7 +480,13 @@ def render_segments(
             if total >= 20 and (index + 1) % 20 == 0:
                 print(f"Rendered segments: {index + 1}/{total}", flush=True)
 
-        concat_media_files(segment_files, output_path)
+        concat_media_files(segment_files, intermediate_path)
+        finalize_rendered_output(
+            intermediate_path=intermediate_path,
+            output_path=output_path,
+            has_video=has_video,
+            audio_bitrate=audio_bitrate,
+        )
 
 
 def denoise_wav(input_wav_path: str, output_wav_path: str, device: str) -> None:
