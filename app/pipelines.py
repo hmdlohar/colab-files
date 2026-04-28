@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Sequence
@@ -80,6 +81,9 @@ def process_audio_to_transcript(
     language_code: str,
     chunk_length_s: int,
     device: str,
+    align_model_name: str | None = None,
+    align_model_dir: str | None = None,
+    align_model_cache_only: bool | None = None,
 ) -> List[Artifact]:
     align_words, convert_to_mono_16k_wav, transcribe_chunks = _wishperx()
     job_dir = store.job_dir(job_id)
@@ -99,6 +103,13 @@ def process_audio_to_transcript(
         wav_file=str(wav_path),
         language_code=language_code,
         device=device,
+        align_model_name=align_model_name,
+        align_model_dir=align_model_dir,
+        align_model_cache_only=(
+            bool(int(os.getenv("COLAB_FILES_ALIGN_MODEL_CACHE_ONLY", "0")))
+            if align_model_cache_only is None
+            else align_model_cache_only
+        ),
     )
     aligned = ensure_word_segments(aligned)
     write_json(transcript_path, aligned)
@@ -134,6 +145,9 @@ def process_video_to_shrinked_video(
     video_preset: str,
     video_crf: int,
     audio_bitrate: str,
+    align_model_name: str | None = None,
+    align_model_dir: str | None = None,
+    align_model_cache_only: bool | None = None,
 ) -> List[Artifact]:
     vad = _vad_editor()
     align_words, _, transcribe_chunks = _wishperx()
@@ -163,6 +177,13 @@ def process_video_to_shrinked_video(
         wav_file=str(extract_audio_path),
         language_code=language_code,
         device=device,
+        align_model_name=align_model_name,
+        align_model_dir=align_model_dir,
+        align_model_cache_only=(
+            bool(int(os.getenv("COLAB_FILES_ALIGN_MODEL_CACHE_ONLY", "0")))
+            if align_model_cache_only is None
+            else align_model_cache_only
+        ),
     )
     aligned = ensure_word_segments(aligned)
     write_json(transcript_path, aligned)

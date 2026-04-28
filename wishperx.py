@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+from typing import Optional
 
 import soundfile as sf
 import torch
@@ -12,11 +13,32 @@ import whisperx
 from tqdm import tqdm
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
+RUNPOD_HF_CACHE_DIR = Path(
+    os.getenv("RUNPOD_HF_CACHE_DIR", "/runpod-volume/huggingface-cache/hub")
+)
+
 
 def clear_memory():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def find_runpod_cached_model_path(model_name: str, cache_dir: Path = RUNPOD_HF_CACHE_DIR) -> Optional[str]:
+    cache_name = model_name.replace("/", "--")
+    snapshots_dir = cache_dir / f"models--{cache_name}" / "snapshots"
+    if not snapshots_dir.exists():
+        return None
+
+    snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
+    if not snapshots:
+        return None
+
+    return str(snapshots[-1])
+
+
+def resolve_model_name_or_path(model_name: str) -> str:
+    return find_runpod_cached_model_path(model_name) or model_name
 
 
 def convert_to_mono_16k_wav(audio_file, wav_file, sampling_rate):
@@ -42,8 +64,9 @@ def convert_to_mono_16k_wav(audio_file, wav_file, sampling_rate):
 
 
 def transcribe_chunks(wav_file, model_name, device, sampling_rate, chunk_length_s):
-    processor = WhisperProcessor.from_pretrained(model_name)
-    model = WhisperForConditionalGeneration.from_pretrained(model_name).to(device)
+    resolved_model = resolve_model_name_or_path(model_name)
+    processor = WhisperProcessor.from_pretrained(resolved_model)
+    model = WhisperForConditionalGeneration.from_pretrained(resolved_model).to(device)
 
     if device == "cuda":
         model = model.half()
@@ -110,10 +133,21 @@ def transcribe_chunks(wav_file, model_name, device, sampling_rate, chunk_length_
     return segments
 
 
-def align_words(segments, wav_file, language_code, device):
+def align_words(
+    segments,
+    wav_file,
+    language_code,
+    device,
+    align_model_name=None,
+    align_model_dir=None,
+    align_model_cache_only=False,
+):
     align_model, metadata = whisperx.load_align_model(
         language_code=language_code,
         device=device,
+        model_name=align_model_name,
+        model_dir=align_model_dir,
+        model_cache_only=align_model_cache_only,
     )
 
     print("\nRunning alignment...")
@@ -168,6 +202,21 @@ def parse_args():
         help="Alignment language code. Defaults to hi.",
     )
     parser.add_argument(
+        "--align-model",
+        default=None,
+        help="Optional WhisperX alignment model name or local path.",
+    )
+    parser.add_argument(
+        "--align-model-dir",
+        default=None,
+        help="Optional directory for alignment model caching.",
+    )
+    parser.add_argument(
+        "--align-model-cache-only",
+        action="store_true",
+        help="Require the alignment model to be available locally.",
+    )
+    parser.add_argument(
         "--chunk-length-s",
         type=int,
         default=30,
@@ -206,6 +255,9 @@ def main():
         wav_file=wav_file,
         language_code=args.language_code,
         device=device,
+        align_model_name=args.align_model,
+        align_model_dir=args.align_model_dir,
+        align_model_cache_only=args.align_model_cache_only,
     )
 
     print_word_timestamps(aligned_result)

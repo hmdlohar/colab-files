@@ -85,6 +85,7 @@ The upload endpoints accept `multipart/form-data`.
 - `requirements-web.txt` for the FastAPI shell and templates.
 - `requirements-audio.txt` for `wishperx.py` and transcript generation.
 - `requirements-video.txt` for `vad_pause_editor.py` and the shrink-video pipeline.
+- `requirements-serverless.txt` for the Runpod queue worker image.
 - `requirements.txt` as a full-stack umbrella install.
 - `Makefile` provides short commands like `make dev` and `make install-all`.
 
@@ -94,6 +95,50 @@ The upload endpoints accept `multipart/form-data`.
 - The video workflow also writes a transcript JSON so the result can be reused by other scripts later.
 - The app stores each job in its own folder under `runs/`.
 - `scripts/video_trim.py` is the local hybrid path: it extracts audio locally, calls the remote audio API, and then runs the local VAD editor.
+
+## Runpod Serverless
+
+This repo now includes a queue-based Runpod worker:
+
+- `handler.py` is the Runpod entrypoint.
+- `Dockerfile` is the image Runpod builds from GitHub.
+- The primary Whisper model should be configured as the endpoint cached model: `collabora/whisper-base-hindi`.
+
+Current serverless behavior:
+
+- The worker accepts either `input.audio_url` or `input.audio_base64` in the Runpod job payload.
+- `wishperx.py` resolves the Runpod cached Hugging Face snapshot path automatically for the Whisper model.
+- WhisperX alignment remains enabled.
+- The Hindi alignment model is not covered by the single cached-model endpoint setting, so it may still download on a cold worker unless you later add your own persistent cache strategy.
+- The worker returns the exact JSON content that is written to `transcript.json`.
+
+Example job payload:
+
+```json
+{
+  "input": {
+    "audio_url": "https://example.com/audio.mp3",
+    "filename": "audio.mp3",
+    "model_name": "collabora/whisper-base-hindi",
+    "language_code": "hi",
+    "chunk_length_s": 30
+  }
+}
+```
+
+Example base64 payload:
+
+```json
+{
+  "input": {
+    "audio_base64": "BASE64_AUDIO_HERE",
+    "filename": "audio.mp3",
+    "model_name": "collabora/whisper-base-hindi",
+    "language_code": "hi",
+    "chunk_length_s": 30
+  }
+}
+```
 
 ## Local hybrid trim script
 
