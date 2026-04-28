@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import contextlib
+import importlib
 import json
 import os
+import socket
 import ssl
 import subprocess
 import sys
@@ -16,6 +20,7 @@ from pathlib import Path
 
 
 DEFAULT_API_BASE_URL = os.getenv("COLAB_FILES_API_BASE_URL", "https://wcuug-34-125-224-111.run.pinggy-free.link")
+DEFAULT_RUNPOD_ENDPOINT_URL = os.getenv("COLAB_FILES_RUNPOD_ENDPOINT_URL", "https://api.runpod.ai/v2/ndw2yl11bszv8c/run")
 DEFAULT_MODEL_NAME = os.getenv("COLAB_FILES_MODEL_NAME", "collabora/whisper-base-hindi")
 DEFAULT_LANGUAGE_CODE = os.getenv("COLAB_FILES_LANGUAGE_CODE", "hi")
 DEFAULT_CHUNK_LENGTH_S = int(os.getenv("COLAB_FILES_CHUNK_LENGTH_S", "30"))
@@ -38,6 +43,9 @@ DEFAULT_HTTP_TIMEOUT_S = int(os.getenv("COLAB_FILES_HTTP_TIMEOUT_S", "60"))
 DEFAULT_RETRY_ATTEMPTS = int(os.getenv("COLAB_FILES_RETRY_ATTEMPTS", "8"))
 DEFAULT_RETRY_INITIAL_DELAY_S = float(os.getenv("COLAB_FILES_RETRY_INITIAL_DELAY_S", "2"))
 DEFAULT_RETRY_MAX_DELAY_S = float(os.getenv("COLAB_FILES_RETRY_MAX_DELAY_S", "30"))
+DEFAULT_RUNPOD_STATUS_BASE_URL = os.getenv("COLAB_FILES_RUNPOD_STATUS_BASE_URL", "https://api.runpod.ai/v2/ndw2yl11bszv8c/status")
+DEFAULT_RUNPOD_INLINE_MAX_BYTES = int(os.getenv("COLAB_FILES_RUNPOD_INLINE_MAX_BYTES", str(7 * 1024 * 1024)))
+DEFAULT_PINGGY_START_TIMEOUT_S = int(os.getenv("COLAB_FILES_PINGGY_START_TIMEOUT_S", "30"))
 
 
 def run(cmd: list[str]) -> None:
@@ -79,6 +87,13 @@ def request_json_with_retry(request: urllib.request.Request, *, timeout: int = D
     if last_error is not None:
         raise last_error
     raise RuntimeError("request_json_with_retry failed unexpectedly")
+
+
+def find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
 
 
 def ffprobe_has_audio(path: Path) -> bool:
@@ -182,9 +197,57 @@ def post_audio_for_transcript(
     return request_json_with_retry(request)
 
 
+def post_runpod_transcript_job(
+    endpoint_url: str,
+    model_name: str,
+    language_code: str,
+    chunk_length_s: int,
+    api_key: str,
+    *,
+    audio_path: Path | None = None,
+    audio_url: str | None = None,
+) -> dict:
+    if audio_path is None and audio_url is None:
+        raise ValueError("Provide either audio_path or audio_url for Runpod submission")
+
+    job_input = {
+        "model_name": model_name,
+        "language_code": language_code,
+        "chunk_length_s": chunk_length_s,
+    }
+    if audio_url is not None:
+        job_input["audio_url"] = audio_url
+        job_input["filename"] = Path(urllib.parse.urlparse(audio_url).path).name or "input_audio.mp3"
+    else:
+        assert audio_path is not None
+        job_input["audio_base64"] = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+        job_input["filename"] = audio_path.name
+
+    payload = {"input": job_input}
+    request = urllib.request.Request(
+        endpoint_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    return request_json_with_retry(request)
+
+
 def fetch_job(api_base_url: str, job_id: str) -> dict:
     url = f"{api_base_url.rstrip('/')}/api/jobs/{job_id}"
     request = urllib.request.Request(url, method="GET")
+    return request_json_with_retry(request)
+
+
+def fetch_runpod_job(status_base_url: str, job_id: str, api_key: str) -> dict:
+    request = urllib.request.Request(
+        f"{status_base_url.rstrip('/')}/{job_id}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        method="GET",
+    )
     return request_json_with_retry(request)
 
 
@@ -229,6 +292,127 @@ def wait_for_job(api_base_url: str, job_id: str, poll_seconds: int) -> dict:
             return job
         print(f"job {job_id}: {status} - {job.get('message', '')}", flush=True)
         time.sleep(poll_seconds)
+
+
+def wait_for_runpod_job(status_base_url: str, job_id: str, api_key: str, poll_seconds: int) -> dict:
+    while True:
+        job = fetch_runpod_job(status_base_url, job_id, api_key)
+        status = job.get("status")
+        if status in {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}:
+            return job
+        print(f"job {job_id}: {status}", flush=True)
+        time.sleep(poll_seconds)
+
+
+def wait_for_http_server(base_url: str, filename: str, timeout_s: int = 10) -> None:
+    deadline = time.time() + timeout_s
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/{urllib.parse.quote(filename)}",
+        method="HEAD",
+    )
+    while time.time() < deadline:
+        try:
+            context = ssl.create_default_context()
+            with urllib.request.urlopen(request, context=context, timeout=5):
+                return
+        except Exception:  # noqa: BLE001
+            time.sleep(0.2)
+    raise RuntimeError("Local HTTP server did not start in time")
+
+
+@contextlib.contextmanager
+def serve_directory(directory: Path):
+    port = find_free_port()
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "http.server",
+            str(port),
+            "--bind",
+            "127.0.0.1",
+            "--directory",
+            str(directory),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        wait_for_http_server(base_url, next(iter(p.name for p in directory.iterdir() if p.is_file()), ""))
+        yield base_url
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+@contextlib.contextmanager
+def open_pinggy_sdk_tunnel(local_port: int):
+    pinggy = importlib.import_module("pinggy")
+    tunnel = pinggy.start_tunnel(forwardto=f"localhost:{local_port}")
+    deadline = time.time() + DEFAULT_PINGGY_START_TIMEOUT_S
+    urls = None
+
+    while time.time() < deadline:
+        candidate = getattr(tunnel, "urls", None)
+        if callable(candidate):
+            candidate = candidate()
+        if candidate:
+            urls = candidate
+            break
+        is_active = getattr(tunnel, "is_active", None)
+        if callable(is_active):
+            try:
+                print(f"Waiting for Pinggy SDK public URL... active={is_active()}", flush=True)
+            except Exception:  # noqa: BLE001
+                print("Waiting for Pinggy SDK public URL...", flush=True)
+        else:
+            print("Waiting for Pinggy SDK public URL...", flush=True)
+        time.sleep(0.5)
+
+    if not urls:
+        is_active = getattr(tunnel, "is_active", None)
+        active_state = None
+        if callable(is_active):
+            try:
+                active_state = is_active()
+            except Exception:  # noqa: BLE001
+                active_state = None
+        raise RuntimeError(
+            f"Pinggy SDK tunnel did not return any public URLs within {DEFAULT_PINGGY_START_TIMEOUT_S}s. "
+            f"active={active_state!r}"
+        )
+
+    public_url = next((url for url in urls if str(url).startswith("https://")), None) or str(urls[0])
+    try:
+        yield public_url.rstrip("/")
+    finally:
+        for method_name in ("stop", "close"):
+            method = getattr(tunnel, method_name, None)
+            if callable(method):
+                method()
+                break
+
+
+@contextlib.contextmanager
+def open_pinggy_http_tunnel(local_port: int):
+    try:
+        importlib.import_module("pinggy")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Pinggy Python SDK is not installed. Run: pip install pinggy") from exc
+
+    print("Starting Pinggy tunnel via Python SDK...", flush=True)
+    with open_pinggy_sdk_tunnel(local_port) as public_url:
+        yield public_url
+
+
+def build_pinggy_audio_url(public_base_url: str, audio_path: Path) -> str:
+    return f"{public_base_url.rstrip('/')}/{urllib.parse.quote(audio_path.name)}"
 
 
 def build_vad_command(args: argparse.Namespace, transcript_path: Path) -> list[str]:
@@ -309,6 +493,32 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_API_BASE_URL,
         help="Base URL of the running web server API.",
     )
+    backend_group = parser.add_mutually_exclusive_group()
+    backend_group.add_argument(
+        "--colab",
+        dest="backend",
+        action="store_const",
+        const="colab",
+        help="Use the existing multipart web API backend.",
+    )
+    backend_group.add_argument(
+        "--runpod",
+        dest="backend",
+        action="store_const",
+        const="runpod",
+        help="Use the deployed Runpod endpoint backend.",
+    )
+    parser.set_defaults(backend="colab")
+    parser.add_argument(
+        "--runpod-endpoint-url",
+        default=DEFAULT_RUNPOD_ENDPOINT_URL,
+        help="Runpod /run or /runsync endpoint URL.",
+    )
+    parser.add_argument(
+        "--runpod-status-base-url",
+        default=DEFAULT_RUNPOD_STATUS_BASE_URL,
+        help="Runpod status URL base, without the job id suffix.",
+    )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME, help="Whisper model name for transcript API.")
     parser.add_argument("--language-code", default=DEFAULT_LANGUAGE_CODE, help="Language code for transcript API.")
     parser.add_argument("--chunk-length-s", type=int, default=DEFAULT_CHUNK_LENGTH_S, help="Transcript chunk length.")
@@ -358,6 +568,10 @@ def default_transcript_path(input_path: Path, output_dir: Path) -> Path:
     return output_dir / f"{input_path.stem}_transcript.json"
 
 
+def default_extracted_audio_path(input_path: Path) -> Path:
+    return input_path.with_name(f"{input_path.stem}_16k_mono.mp3")
+
+
 def main() -> int:
     args = parse_args()
 
@@ -377,35 +591,88 @@ def main() -> int:
             print(f"Using existing transcript: {transcript_path}")
             args.transcript_output = transcript_path
         else:
-            tmpdir_path = Path(tmpdir)
-            audio_path = tmpdir_path / "input_audio.mp3"
+            audio_path = default_extracted_audio_path(args.input)
 
-            print("Extracting local audio...")
-            extract_audio(args.input, audio_path)
+            if audio_path.exists():
+                print(f"Using existing extracted audio: {audio_path}")
+            else:
+                print("Extracting local audio...")
+                extract_audio(args.input, audio_path)
 
-            print("Uploading audio to transcript API...")
-            job = post_audio_for_transcript(
-                api_base_url=args.api_base_url,
-                audio_path=audio_path,
-                model_name=args.model_name,
-                language_code=args.language_code,
-                chunk_length_s=args.chunk_length_s,
-            )
+            if args.backend == "runpod":
+                runpod_api_key = os.getenv("RUNPOD_API_KEY")
+                if not runpod_api_key:
+                    raise RuntimeError("RUNPOD_API_KEY must be set when using --runpod")
 
-            job_id = job["id"]
-            print(f"Queued job {job_id}, waiting for transcript...")
-            job = wait_for_job(args.api_base_url, job_id, args.poll_seconds)
-            if job.get("status") == "error":
-                raise RuntimeError(f"Transcript job failed: {job.get('error') or job.get('message')}")
+                if audio_path.stat().st_size <= DEFAULT_RUNPOD_INLINE_MAX_BYTES:
+                    print("Submitting audio to Runpod transcript endpoint as base64...")
+                    job = post_runpod_transcript_job(
+                        endpoint_url=args.runpod_endpoint_url,
+                        audio_path=audio_path,
+                        model_name=args.model_name,
+                        language_code=args.language_code,
+                        chunk_length_s=args.chunk_length_s,
+                        api_key=runpod_api_key,
+                    )
+                else:
+                    print("Audio is too large for inline Runpod payload. Starting local file server and Pinggy tunnel...")
+                    with serve_directory(audio_path.parent) as local_base_url:
+                        local_port = int(urllib.parse.urlparse(local_base_url).port or 80)
+                        with open_pinggy_http_tunnel(local_port) as public_base_url:
+                            audio_url = build_pinggy_audio_url(public_base_url, audio_path)
+                            print(f"Submitting audio URL to Runpod: {audio_url}")
+                            job = post_runpod_transcript_job(
+                                endpoint_url=args.runpod_endpoint_url,
+                                audio_url=audio_url,
+                                model_name=args.model_name,
+                                language_code=args.language_code,
+                                chunk_length_s=args.chunk_length_s,
+                                api_key=runpod_api_key,
+                            )
 
-            artifacts = job.get("artifacts", [])
-            transcript_artifact = next((item for item in artifacts if item.get("kind") == "json"), None)
-            if transcript_artifact is None:
-                raise RuntimeError("Transcript API did not return a JSON artifact")
+                job_id = job["id"]
+                print(f"Queued Runpod job {job_id}, waiting for transcript...")
+                job = wait_for_runpod_job(
+                    args.runpod_status_base_url,
+                    job_id,
+                    runpod_api_key,
+                    args.poll_seconds,
+                )
+                if job.get("status") != "COMPLETED":
+                    raise RuntimeError(f"Runpod transcript job failed: {job.get('error') or job}")
 
-            transcript_url = f"{args.api_base_url.rstrip('/')}{transcript_artifact['download_url']}"
-            print(f"Downloading transcript to {transcript_path}...")
-            download_file(transcript_url, transcript_path)
+                transcript = job.get("output")
+                if not isinstance(transcript, dict):
+                    raise RuntimeError("Runpod response did not include transcript JSON in output")
+                print(f"Writing transcript to {transcript_path}...")
+                transcript_path.write_text(
+                    json.dumps(transcript, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            else:
+                print("Uploading audio to transcript API...")
+                job = post_audio_for_transcript(
+                    api_base_url=args.api_base_url,
+                    audio_path=audio_path,
+                    model_name=args.model_name,
+                    language_code=args.language_code,
+                    chunk_length_s=args.chunk_length_s,
+                )
+
+                job_id = job["id"]
+                print(f"Queued job {job_id}, waiting for transcript...")
+                job = wait_for_job(args.api_base_url, job_id, args.poll_seconds)
+                if job.get("status") == "error":
+                    raise RuntimeError(f"Transcript job failed: {job.get('error') or job.get('message')}")
+
+                artifacts = job.get("artifacts", [])
+                transcript_artifact = next((item for item in artifacts if item.get("kind") == "json"), None)
+                if transcript_artifact is None:
+                    raise RuntimeError("Transcript API did not return a JSON artifact")
+
+                transcript_url = f"{args.api_base_url.rstrip('/')}{transcript_artifact['download_url']}"
+                print(f"Downloading transcript to {transcript_path}...")
+                download_file(transcript_url, transcript_path)
             args.transcript_output = transcript_path
 
         print("Running local VAD trim...")

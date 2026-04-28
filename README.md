@@ -160,6 +160,26 @@ By default it writes the final trimmed video and transcript into the same direct
 
 The script expects `ffmpeg` and `ffprobe` on `PATH` and the local VAD/editor dependencies installed.
 
+To use the deployed Runpod endpoint instead of the Colab-style multipart API:
+
+```bash
+export RUNPOD_API_KEY=your_key_here
+python scripts/video_trim.py input.mp4 --runpod
+```
+
+Backend selection:
+
+- `--colab` uses the existing upload API and remains the default.
+- `--runpod` sends extracted audio to the Runpod endpoint and writes the returned transcript JSON locally.
+- For small extracted audio files, `--runpod` sends base64 inline.
+- For larger extracted audio files, `--runpod` automatically starts a local Python file server plus a Pinggy tunnel and submits a temporary `audio_url` instead.
+
+The large-file Runpod path requires the Pinggy Python SDK:
+
+```bash
+pip install pinggy
+```
+
 Its local VAD pass defaults to the same edit profile you use by hand:
 
 ```text
