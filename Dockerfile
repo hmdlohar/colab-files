@@ -14,11 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-serverless.txt requirements-serverless.txt
-
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.5.1 torchaudio==2.5.1
-
 RUN pip install --no-cache-dir -r requirements-serverless.txt
+
+RUN pip install --no-cache-dir --upgrade --force-reinstall --index-url https://download.pytorch.org/whl/cu121 \
+    torchaudio==2.5.1 torchvision==0.20.1
 
 COPY app/__init__.py app/__init__.py
 COPY app/pipelines.py app/pipelines.py

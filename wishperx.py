@@ -1,5 +1,6 @@
 import argparse
 import gc
+import inspect
 import json
 import math
 import os
@@ -142,12 +143,21 @@ def align_words(
     align_model_dir=None,
     align_model_cache_only=False,
 ):
+    load_align_model_kwargs = {
+        "language_code": language_code,
+        "device": device,
+    }
+    signature = inspect.signature(whisperx.load_align_model)
+
+    if "model_name" in signature.parameters and align_model_name is not None:
+        load_align_model_kwargs["model_name"] = align_model_name
+    if "model_dir" in signature.parameters and align_model_dir is not None:
+        load_align_model_kwargs["model_dir"] = align_model_dir
+    if "model_cache_only" in signature.parameters:
+        load_align_model_kwargs["model_cache_only"] = align_model_cache_only
+
     align_model, metadata = whisperx.load_align_model(
-        language_code=language_code,
-        device=device,
-        model_name=align_model_name,
-        model_dir=align_model_dir,
-        model_cache_only=align_model_cache_only,
+        **load_align_model_kwargs,
     )
 
     print("\nRunning alignment...")
