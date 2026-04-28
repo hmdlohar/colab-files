@@ -21,7 +21,7 @@ Examples:
       --output output.wav \
       --denoise after
 
-python vad_pause_editor.py     --input shrink.mkv     --output shrink_tight.mkv     --pad-before-ms 95     --pad-after-ms 135     --merge-gap-ms 140     --preserve-short-pause-ms 160     --long-pause-step-ms 90     --long-pause-step-every-ms 800     --max-keep-silence-ms 220     --transcript transcript.json     --filler-words "अः,हूं,मतलब,तो,ठीक,अब,ना,वो,अरे"     --filler-pad-before-ms 25     --filler-pad-after-ms 40     --video-preset fast     --video-crf 23     --audio-bitrate 128k
+python vad_pause_editor.py     --input shrink.mkv     --output shrink_tight.mkv     --pad-before-ms 150     --pad-after-ms 200     --merge-gap-ms 140     --preserve-short-pause-ms 160     --long-pause-step-ms 90     --long-pause-step-every-ms 800     --max-keep-silence-ms 220     --transcript transcript.json     --filler-words "अः,हूं,मतलब,तो,ठीक,अब,ना,वो,अरे"     --filler-pad-before-ms 25     --filler-pad-after-ms 40     --audio-fade-ms 50     --video-preset fast     --video-crf 23     --audio-bitrate 128k
 
 Dependencies:
   pip install soundfile numpy
@@ -77,6 +77,29 @@ def run_capture(cmd: Sequence[str]) -> str:
     return result.stdout
 
 
+def run_quiet(cmd: Sequence[str]) -> None:
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        return
+
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        cmd,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def ffmpeg_cmd(*args: str) -> List[str]:
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", *args]
+
+
+def print_progress(message: str) -> None:
+    print(message, flush=True)
+
+
 def ffprobe_streams(path: str) -> Tuple[bool, bool]:
     cmd = [
         "ffprobe",
@@ -108,8 +131,7 @@ def media_duration(path: str) -> float:
 
 
 def extract_audio_for_vad(input_path: str, wav_path: str) -> None:
-    cmd = [
-        "ffmpeg",
+    cmd = ffmpeg_cmd(
         "-y",
         "-i",
         input_path,
@@ -121,8 +143,8 @@ def extract_audio_for_vad(input_path: str, wav_path: str) -> None:
         "-c:a",
         "pcm_s16le",
         wav_path,
-    ]
-    run(cmd)
+    )
+    run_quiet(cmd)
 
 
 def load_silero_vad():
@@ -364,8 +386,7 @@ def concat_media_files(input_files: Sequence[str], output_path: str) -> None:
         concat_path = concat_file.name
 
     try:
-        cmd = [
-            "ffmpeg",
+        cmd = ffmpeg_cmd(
             "-y",
             "-f",
             "concat",
@@ -376,8 +397,8 @@ def concat_media_files(input_files: Sequence[str], output_path: str) -> None:
             "-c",
             "copy",
             output_path,
-        ]
-        run(cmd)
+        )
+        run_quiet(cmd)
     finally:
         try:
             os.unlink(concat_path)
@@ -394,11 +415,11 @@ def finalize_rendered_output(
     output_suffix = Path(output_path).suffix.lower()
 
     if not has_video and output_suffix == ".wav":
-        cmd = ["ffmpeg", "-y", "-i", intermediate_path, "-c:a", "pcm_s16le", output_path]
-        run(cmd)
+        cmd = ffmpeg_cmd("-y", "-i", intermediate_path, "-c:a", "pcm_s16le", output_path)
+        run_quiet(cmd)
         return
 
-    cmd = ["ffmpeg", "-y", "-i", intermediate_path]
+    cmd = ffmpeg_cmd("-y", "-i", intermediate_path)
     if has_video:
         cmd += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy"]
         if output_suffix in {".mp4", ".m4v", ".mov", ".mkv", ".mka"}:
@@ -419,7 +440,19 @@ def finalize_rendered_output(
             cmd += ["-c:a", "aac", "-b:a", audio_bitrate]
 
     cmd.append(output_path)
-    run(cmd)
+    run_quiet(cmd)
+
+
+def build_audio_fade_filter(duration: float, audio_fade_ms: int) -> str | None:
+    if audio_fade_ms <= 0 or duration <= 0:
+        return None
+
+    fade_duration = min(audio_fade_ms / 1000.0, duration / 2.0)
+    if fade_duration <= 0:
+        return None
+
+    fade_out_start = max(0.0, duration - fade_duration)
+    return f"afade=t=in:st=0:d={fade_duration:.6f},afade=t=out:st={fade_out_start:.6f}:d={fade_duration:.6f}"
 
 
 def render_segments(
@@ -428,6 +461,7 @@ def render_segments(
     segments: Sequence[Segment],
     render_chunk_segments: int,
     render_chunk_duration_s: float,
+    audio_fade_ms: int,
     video_preset: str,
     video_crf: int,
     audio_bitrate: str,
@@ -442,8 +476,18 @@ def render_segments(
     with tempfile.TemporaryDirectory(prefix="vad_pause_editor_render_") as tmpdir:
         segment_files: List[str] = []
         total = len(segments)
+        renderable_segments = [segment for segment in segments if segment.duration > 0.02]
+        renderable_total = len(renderable_segments)
+        renderable_duration = sum(segment.duration for segment in renderable_segments)
         segment_suffix = ".mkv" if has_video else ".mka"
         intermediate_path = os.path.join(tmpdir, f"concat{segment_suffix}")
+        rendered_count = 0
+        rendered_duration = 0.0
+
+        print_progress(
+            f"Rendering {renderable_total} kept segments "
+            f"({renderable_duration:.2f}s total kept duration)..."
+        )
 
         for index, segment in enumerate(segments):
             segment_path = os.path.join(tmpdir, f"segment_{index:05d}{segment_suffix}")
@@ -451,8 +495,7 @@ def render_segments(
             if duration <= 0.02:
                 continue
 
-            cmd = [
-                "ffmpeg",
+            cmd = ffmpeg_cmd(
                 "-y",
                 "-ss",
                 f"{segment.start:.6f}",
@@ -462,25 +505,40 @@ def render_segments(
                 f"{duration:.6f}",
                 "-avoid_negative_ts",
                 "make_zero",
-            ]
+            )
             if has_video:
                 cmd += ["-c:v", "libx264", "-preset", video_preset, "-crf", str(video_crf)]
             else:
                 cmd += ["-vn"]
 
             if has_audio:
+                audio_filter = build_audio_fade_filter(duration, audio_fade_ms)
+                if audio_filter:
+                    cmd += ["-af", audio_filter]
                 cmd += ["-c:a", "pcm_s16le"]
             else:
                 cmd += ["-an"]
 
             cmd += [segment_path]
-            run(cmd)
+            run_quiet(cmd)
             segment_files.append(segment_path)
+            rendered_count += 1
+            rendered_duration += duration
 
-            if total >= 20 and (index + 1) % 20 == 0:
-                print(f"Rendered segments: {index + 1}/{total}", flush=True)
+            if (
+                rendered_count == 1
+                or rendered_count == renderable_total
+                or rendered_count % 10 == 0
+            ):
+                percent = (rendered_count / renderable_total * 100.0) if renderable_total else 100.0
+                print_progress(
+                    f"Rendered segments: {rendered_count}/{renderable_total} "
+                    f"({percent:.1f}%) | kept {rendered_duration:.2f}/{renderable_duration:.2f}s"
+                )
 
+        print_progress("Concatenating rendered segments...")
         concat_media_files(segment_files, intermediate_path)
+        print_progress("Finalizing output container...")
         finalize_rendered_output(
             intermediate_path=intermediate_path,
             output_path=output_path,
@@ -527,8 +585,7 @@ def denoise_wav(input_wav_path: str, output_wav_path: str, device: str) -> None:
 
 
 def replace_audio_track(video_path: str, wav_path: str, output_path: str) -> None:
-    cmd = [
-        "ffmpeg",
+    cmd = ffmpeg_cmd(
         "-y",
         "-i",
         video_path,
@@ -546,13 +603,12 @@ def replace_audio_track(video_path: str, wav_path: str, output_path: str) -> Non
         "192k",
         "-shortest",
         output_path,
-    ]
-    run(cmd)
+    )
+    run_quiet(cmd)
 
 
 def extract_audio_full(input_path: str, wav_path: str) -> None:
-    cmd = [
-        "ffmpeg",
+    cmd = ffmpeg_cmd(
         "-y",
         "-i",
         input_path,
@@ -560,8 +616,8 @@ def extract_audio_full(input_path: str, wav_path: str) -> None:
         "-acodec",
         "pcm_s16le",
         wav_path,
-    ]
-    run(cmd)
+    )
+    run_quiet(cmd)
 
 
 def print_summary(raw_speech_segments: Sequence[Segment], final_segments: Sequence[Segment], total_duration: float) -> None:
@@ -581,8 +637,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="Input audio or video path")
     parser.add_argument("--output", required=True, help="Output audio or video path")
     parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD threshold")
-    parser.add_argument("--pad-before-ms", type=int, default=120, help="Padding before speech")
-    parser.add_argument("--pad-after-ms", type=int, default=180, help="Padding after speech")
+    parser.add_argument("--pad-before-ms", type=int, default=150, help="Padding before speech")
+    parser.add_argument("--pad-after-ms", type=int, default=200, help="Padding after speech")
     parser.add_argument("--merge-gap-ms", type=int, default=200, help="Merge speech segments if closer than this")
     parser.add_argument("--leading-keep-ms", type=int, default=150, help="Keep this much leading silence")
     parser.add_argument("--trailing-keep-ms", type=int, default=200, help="Keep this much trailing silence")
@@ -601,6 +657,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--filler-pad-before-ms", type=int, default=40, help="Padding before filler cut")
     parser.add_argument("--filler-pad-after-ms", type=int, default=60, help="Padding after filler cut")
+    parser.add_argument("--audio-fade-ms", type=int, default=50, help="Fade in/out duration for each kept audio chunk")
     parser.add_argument(
         "--render-chunk-segments",
         type=int,
@@ -656,16 +713,21 @@ def main() -> int:
     if not has_audio:
         raise ValueError("Input must contain an audio stream")
 
+    total_steps = 6 if args.denoise != "none" else 4
+
     with tempfile.TemporaryDirectory(prefix="vad_pause_editor_") as tmpdir:
         vad_wav = os.path.join(tmpdir, "vad_input.wav")
+        print_progress(f"Step 1/{total_steps}: Extracting mono audio for VAD...")
         extract_audio_for_vad(input_path, vad_wav)
 
+        print_progress(f"Step 2/{total_steps}: Detecting speech segments...")
         raw_speech = detect_speech_segments(vad_wav, threshold=args.vad_threshold)
         if not raw_speech:
             print("No speech detected. Copying input to output.", file=sys.stderr)
             shutil.copy2(input_path, output_path)
             return 0
 
+        print_progress(f"Step 3/{total_steps}: Building keep/cut timeline...")
         speech_segments = expand_and_merge_segments(
             raw_speech,
             total_duration=total_duration,
@@ -697,31 +759,37 @@ def main() -> int:
             output_segments = subtract_cut_segments(output_segments, filler_cut_segments)
 
         if args.denoise == "none":
+            print_progress(f"Step 4/{total_steps}: Rendering trimmed output...")
             render_segments(
                 input_path,
                 output_path,
                 output_segments,
                 render_chunk_segments=args.render_chunk_segments,
                 render_chunk_duration_s=args.render_chunk_duration_s,
+                audio_fade_ms=args.audio_fade_ms,
                 video_preset=args.video_preset,
                 video_crf=args.video_crf,
                 audio_bitrate=args.audio_bitrate,
             )
         else:
             intermediate = os.path.join(tmpdir, f"edited{Path(output_path).suffix or '.mp4'}")
+            print_progress(f"Step 4/{total_steps}: Rendering trimmed output...")
             render_segments(
                 input_path,
                 intermediate,
                 output_segments,
                 render_chunk_segments=args.render_chunk_segments,
                 render_chunk_duration_s=args.render_chunk_duration_s,
+                audio_fade_ms=args.audio_fade_ms,
                 video_preset=args.video_preset,
                 video_crf=args.video_crf,
                 audio_bitrate=args.audio_bitrate,
             )
 
             denoised_wav = os.path.join(tmpdir, "denoised.wav")
+            print_progress(f"Step 5/{total_steps}: Extracting edited audio for denoise...")
             extract_audio_full(intermediate, os.path.join(tmpdir, "edited.wav"))
+            print_progress(f"Step 6/{total_steps}: Denoising and replacing audio track...")
             denoise_wav(os.path.join(tmpdir, "edited.wav"), denoised_wav, device=args.device)
 
             if has_video:
@@ -729,6 +797,7 @@ def main() -> int:
             else:
                 shutil.copy2(denoised_wav, output_path)
 
+        print_progress("Completed VAD edit.")
         print_summary(raw_speech, output_segments, total_duration)
         if filler_cut_segments:
             print(f"Removed filler regions:   {len(filler_cut_segments)}")

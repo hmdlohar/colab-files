@@ -19,13 +19,13 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_API_BASE_URL = os.getenv("COLAB_FILES_API_BASE_URL", "https://wcuug-34-125-224-111.run.pinggy-free.link")
+DEFAULT_API_BASE_URL = os.getenv("COLAB_FILES_API_BASE_URL", "https://helped-orca-wrongly.ngrok-free.app/")
 DEFAULT_RUNPOD_ENDPOINT_URL = os.getenv("COLAB_FILES_RUNPOD_ENDPOINT_URL", "https://api.runpod.ai/v2/ndw2yl11bszv8c/run")
 DEFAULT_MODEL_NAME = os.getenv("COLAB_FILES_MODEL_NAME", "collabora/whisper-base-hindi")
 DEFAULT_LANGUAGE_CODE = os.getenv("COLAB_FILES_LANGUAGE_CODE", "hi")
 DEFAULT_CHUNK_LENGTH_S = int(os.getenv("COLAB_FILES_CHUNK_LENGTH_S", "30"))
-DEFAULT_PAD_BEFORE_MS = 95
-DEFAULT_PAD_AFTER_MS = 135
+DEFAULT_PAD_BEFORE_MS = 150
+DEFAULT_PAD_AFTER_MS = 200
 DEFAULT_MERGE_GAP_MS = 140
 DEFAULT_LEADING_KEEP_MS = 150
 DEFAULT_TRAILING_KEEP_MS = 200
@@ -36,6 +36,7 @@ DEFAULT_MAX_KEEP_SILENCE_MS = 220
 DEFAULT_FILLER_WORDS = "अः,हूं,मतलब,तो,ठीक,अब,ना,वो,अरे"
 DEFAULT_FILLER_PAD_BEFORE_MS = 25
 DEFAULT_FILLER_PAD_AFTER_MS = 40
+DEFAULT_AUDIO_FADE_MS = 50
 DEFAULT_VIDEO_PRESET = "fast"
 DEFAULT_VIDEO_CRF = 18
 DEFAULT_AUDIO_BITRATE = "128k"
@@ -449,6 +450,8 @@ def build_vad_command(args: argparse.Namespace, transcript_path: Path) -> list[s
         str(args.filler_pad_before_ms),
         "--filler-pad-after-ms",
         str(args.filler_pad_after_ms),
+        "--audio-fade-ms",
+        str(args.audio_fade_ms),
         "--video-preset",
         args.video_preset,
         "--video-crf",
@@ -539,6 +542,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--filler-pad-before-ms", type=int, default=DEFAULT_FILLER_PAD_BEFORE_MS)
     parser.add_argument("--filler-pad-after-ms", type=int, default=DEFAULT_FILLER_PAD_AFTER_MS)
+    parser.add_argument("--audio-fade-ms", type=int, default=DEFAULT_AUDIO_FADE_MS)
     parser.add_argument("--video-preset", default=DEFAULT_VIDEO_PRESET)
     parser.add_argument("--video-crf", type=int, default=DEFAULT_VIDEO_CRF)
     parser.add_argument("--audio-bitrate", default=DEFAULT_AUDIO_BITRATE)
