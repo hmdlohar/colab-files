@@ -1,4 +1,4 @@
-FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
 
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
@@ -14,11 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-serverless.txt requirements-serverless.txt
+RUN pip install --no-cache-dir -r requirements-serverless.txt
 
 RUN pip install --no-cache-dir --upgrade --force-reinstall --index-url https://download.pytorch.org/whl/cu121 \
     torchaudio==2.5.1 torchvision==0.20.1
-
-RUN pip install --no-cache-dir --no-deps -r requirements-serverless.txt
 
 COPY app/__init__.py app/__init__.py
 COPY app/pipelines.py app/pipelines.py
