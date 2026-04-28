@@ -24,8 +24,8 @@ DEFAULT_RUNPOD_ENDPOINT_URL = os.getenv("COLAB_FILES_RUNPOD_ENDPOINT_URL", "http
 DEFAULT_MODEL_NAME = os.getenv("COLAB_FILES_MODEL_NAME", "collabora/whisper-base-hindi")
 DEFAULT_LANGUAGE_CODE = os.getenv("COLAB_FILES_LANGUAGE_CODE", "hi")
 DEFAULT_CHUNK_LENGTH_S = int(os.getenv("COLAB_FILES_CHUNK_LENGTH_S", "30"))
-DEFAULT_PAD_BEFORE_MS = 150
-DEFAULT_PAD_AFTER_MS = 200
+DEFAULT_PAD_BEFORE_MS = 75
+DEFAULT_PAD_AFTER_MS = 110
 DEFAULT_MERGE_GAP_MS = 140
 DEFAULT_LEADING_KEEP_MS = 150
 DEFAULT_TRAILING_KEEP_MS = 200
@@ -33,9 +33,12 @@ DEFAULT_PRESERVE_SHORT_PAUSE_MS = 160
 DEFAULT_LONG_PAUSE_STEP_MS = 90
 DEFAULT_LONG_PAUSE_STEP_EVERY_MS = 800
 DEFAULT_MAX_KEEP_SILENCE_MS = 220
-DEFAULT_FILLER_WORDS = "अः,हूं,मतलब,तो,ठीक,अब,ना,वो,अरे"
+DEFAULT_FILLER_WORDS = "अः,हूं"
 DEFAULT_FILLER_PAD_BEFORE_MS = 25
 DEFAULT_FILLER_PAD_AFTER_MS = 40
+DEFAULT_FILLER_MAX_DURATION_MS = 280
+DEFAULT_FILLER_ISOLATION_GAP_MS = 120
+DEFAULT_MIN_KEEP_FRAGMENT_MS = 180
 DEFAULT_AUDIO_FADE_MS = 50
 DEFAULT_VIDEO_PRESET = "fast"
 DEFAULT_VIDEO_CRF = 18
@@ -450,6 +453,12 @@ def build_vad_command(args: argparse.Namespace, transcript_path: Path) -> list[s
         str(args.filler_pad_before_ms),
         "--filler-pad-after-ms",
         str(args.filler_pad_after_ms),
+        "--filler-max-duration-ms",
+        str(args.filler_max_duration_ms),
+        "--filler-isolation-gap-ms",
+        str(args.filler_isolation_gap_ms),
+        "--min-keep-fragment-ms",
+        str(args.min_keep_fragment_ms),
         "--audio-fade-ms",
         str(args.audio_fade_ms),
         "--video-preset",
@@ -542,6 +551,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--filler-pad-before-ms", type=int, default=DEFAULT_FILLER_PAD_BEFORE_MS)
     parser.add_argument("--filler-pad-after-ms", type=int, default=DEFAULT_FILLER_PAD_AFTER_MS)
+    parser.add_argument("--filler-max-duration-ms", type=int, default=DEFAULT_FILLER_MAX_DURATION_MS)
+    parser.add_argument("--filler-isolation-gap-ms", type=int, default=DEFAULT_FILLER_ISOLATION_GAP_MS)
+    parser.add_argument("--min-keep-fragment-ms", type=int, default=DEFAULT_MIN_KEEP_FRAGMENT_MS)
     parser.add_argument("--audio-fade-ms", type=int, default=DEFAULT_AUDIO_FADE_MS)
     parser.add_argument("--video-preset", default=DEFAULT_VIDEO_PRESET)
     parser.add_argument("--video-crf", type=int, default=DEFAULT_VIDEO_CRF)

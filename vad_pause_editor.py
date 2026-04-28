@@ -21,7 +21,7 @@ Examples:
       --output output.wav \
       --denoise after
 
-python vad_pause_editor.py     --input shrink.mkv     --output shrink_tight.mkv     --pad-before-ms 150     --pad-after-ms 200     --merge-gap-ms 140     --preserve-short-pause-ms 160     --long-pause-step-ms 90     --long-pause-step-every-ms 800     --max-keep-silence-ms 220     --transcript transcript.json     --filler-words "अः,हूं,मतलब,तो,ठीक,अब,ना,वो,अरे"     --filler-pad-before-ms 25     --filler-pad-after-ms 40     --audio-fade-ms 50     --video-preset fast     --video-crf 23     --audio-bitrate 128k
+python vad_pause_editor.py     --input shrink.mkv     --output shrink_tight.mkv     --pad-before-ms 75     --pad-after-ms 110     --merge-gap-ms 140     --preserve-short-pause-ms 160     --long-pause-step-ms 90     --long-pause-step-every-ms 800     --max-keep-silence-ms 220     --transcript transcript.json     --filler-words "अः,हूं"     --filler-pad-before-ms 25     --filler-pad-after-ms 40     --audio-fade-ms 50     --video-preset fast     --video-crf 23     --audio-bitrate 128k
 
 Dependencies:
   pip install soundfile numpy
@@ -306,11 +306,22 @@ def normalize_token(token: str) -> str:
     return token
 
 
+def parse_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def load_filler_segments(
     transcript_path: str,
     filler_words: Sequence[str],
     filler_pad_before_ms: int,
     filler_pad_after_ms: int,
+    filler_max_duration_ms: int,
+    filler_isolation_gap_ms: int,
 ) -> List[Segment]:
     with open(transcript_path, "r", encoding="utf-8") as handle:
         data = json.load(handle)
@@ -319,26 +330,67 @@ def load_filler_segments(
     if not wanted:
         return []
 
-    filler_segments: List[Segment] = []
+    transcript_items = []
     for item in data.get("word_segments", []):
-        raw_word = item.get("word", "")
-        normalized = normalize_token(raw_word)
+        start = parse_float(item.get("start"))
+        end = parse_float(item.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        transcript_items.append((start, end, normalize_token(item.get("word", ""))))
+
+    transcript_items.sort(key=lambda item: item[0])
+    isolation_gap_s = filler_isolation_gap_ms / 1000.0
+    max_duration_s = filler_max_duration_ms / 1000.0
+    filler_segments: List[Segment] = []
+    for index, (start, end, normalized) in enumerate(transcript_items):
         if normalized not in wanted:
             continue
+        if end - start > max_duration_s:
+            continue
 
-        start = item.get("start")
-        end = item.get("end")
-        if start is None or end is None or end <= start:
+        prev_gap = float("inf") if index == 0 else max(0.0, start - transcript_items[index - 1][1])
+        next_gap = float("inf") if index == len(transcript_items) - 1 else max(0.0, transcript_items[index + 1][0] - end)
+        if max(prev_gap, next_gap) < isolation_gap_s:
             continue
 
         filler_segments.append(
             Segment(
-                start=max(0.0, float(start) - filler_pad_before_ms / 1000.0),
-                end=float(end) + filler_pad_after_ms / 1000.0,
+                start=max(0.0, start - filler_pad_before_ms / 1000.0),
+                end=end + filler_pad_after_ms / 1000.0,
             )
         )
 
     return merge_touching_segments(filler_segments)
+
+
+def filter_cut_segments(
+    keep_segments: Sequence[Segment],
+    cut_segments: Sequence[Segment],
+    min_keep_fragment_ms: int,
+) -> List[Segment]:
+    if not cut_segments or min_keep_fragment_ms <= 0:
+        return list(cut_segments)
+
+    min_keep_fragment_s = min_keep_fragment_ms / 1000.0
+    safe_cuts: List[Segment] = []
+    for cut in merge_touching_segments(cut_segments):
+        unsafe = False
+        for keep in keep_segments:
+            overlap_start = max(keep.start, cut.start)
+            overlap_end = min(keep.end, cut.end)
+            if overlap_end <= overlap_start:
+                continue
+
+            left_fragment = overlap_start - keep.start
+            right_fragment = keep.end - overlap_end
+            if (0.0 < left_fragment < min_keep_fragment_s) or (0.0 < right_fragment < min_keep_fragment_s):
+                unsafe = True
+                break
+
+        if not unsafe:
+            safe_cuts.append(cut)
+
+    return safe_cuts
 
 
 def subtract_cut_segments(keep_segments: Sequence[Segment], cut_segments: Sequence[Segment]) -> List[Segment]:
@@ -637,8 +689,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="Input audio or video path")
     parser.add_argument("--output", required=True, help="Output audio or video path")
     parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD threshold")
-    parser.add_argument("--pad-before-ms", type=int, default=150, help="Padding before speech")
-    parser.add_argument("--pad-after-ms", type=int, default=200, help="Padding after speech")
+    parser.add_argument("--pad-before-ms", type=int, default=75, help="Padding before speech")
+    parser.add_argument("--pad-after-ms", type=int, default=110, help="Padding after speech")
     parser.add_argument("--merge-gap-ms", type=int, default=200, help="Merge speech segments if closer than this")
     parser.add_argument("--leading-keep-ms", type=int, default=150, help="Keep this much leading silence")
     parser.add_argument("--trailing-keep-ms", type=int, default=200, help="Keep this much trailing silence")
@@ -652,11 +704,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--filler-words",
-        default="अः,um,uh,umm,uhh,hmm,mmm",
+        default="अः,हूं,um,uh,umm,uhh,hmm,mmm",
         help="Comma-separated filler words to remove when --transcript is provided",
     )
     parser.add_argument("--filler-pad-before-ms", type=int, default=40, help="Padding before filler cut")
     parser.add_argument("--filler-pad-after-ms", type=int, default=60, help="Padding after filler cut")
+    parser.add_argument("--filler-max-duration-ms", type=int, default=280, help="Skip transcript filler cuts longer than this")
+    parser.add_argument("--filler-isolation-gap-ms", type=int, default=120, help="Require at least this much transcript gap on one side of a filler cut")
+    parser.add_argument("--min-keep-fragment-ms", type=int, default=180, help="Skip transcript cuts that would leave a tiny kept speech fragment")
     parser.add_argument("--audio-fade-ms", type=int, default=50, help="Fade in/out duration for each kept audio chunk")
     parser.add_argument(
         "--render-chunk-segments",
@@ -755,6 +810,13 @@ def main() -> int:
                 filler_words=filler_words,
                 filler_pad_before_ms=args.filler_pad_before_ms,
                 filler_pad_after_ms=args.filler_pad_after_ms,
+                filler_max_duration_ms=args.filler_max_duration_ms,
+                filler_isolation_gap_ms=args.filler_isolation_gap_ms,
+            )
+            filler_cut_segments = filter_cut_segments(
+                keep_segments=output_segments,
+                cut_segments=filler_cut_segments,
+                min_keep_fragment_ms=args.min_keep_fragment_ms,
             )
             output_segments = subtract_cut_segments(output_segments, filler_cut_segments)
 
