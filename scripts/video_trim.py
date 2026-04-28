@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_API_BASE_URL = os.getenv("COLAB_FILES_API_BASE_URL", "https://dgrjj-35-204-71-45.run.pinggy-free.link")
+DEFAULT_API_BASE_URL = os.getenv("COLAB_FILES_API_BASE_URL", "https://wcuug-34-125-224-111.run.pinggy-free.link")
 DEFAULT_MODEL_NAME = os.getenv("COLAB_FILES_MODEL_NAME", "collabora/whisper-base-hindi")
 DEFAULT_LANGUAGE_CODE = os.getenv("COLAB_FILES_LANGUAGE_CODE", "hi")
 DEFAULT_CHUNK_LENGTH_S = int(os.getenv("COLAB_FILES_CHUNK_LENGTH_S", "30"))
@@ -354,6 +354,10 @@ def resolve_output_paths(args: argparse.Namespace) -> None:
         args.transcript_output = (output_dir / args.transcript_output).resolve()
 
 
+def default_transcript_path(input_path: Path, output_dir: Path) -> Path:
+    return output_dir / f"{input_path.stem}_transcript.json"
+
+
 def main() -> int:
     args = parse_args()
 
@@ -363,47 +367,53 @@ def main() -> int:
         print("Warning: input does not look like a video file, but the script will continue.", file=sys.stderr)
 
     resolve_output_paths(args)
+    transcript_path = args.transcript_output or default_transcript_path(args.input, args.output.parent)
 
     if not ffprobe_has_audio(args.input):
         raise ValueError("Input video must contain an audio stream")
 
     with tempfile.TemporaryDirectory(prefix="video_trim_") as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        audio_path = tmpdir_path / "input_audio.mp3"
+        if transcript_path.exists():
+            print(f"Using existing transcript: {transcript_path}")
+            args.transcript_output = transcript_path
+        else:
+            tmpdir_path = Path(tmpdir)
+            audio_path = tmpdir_path / "input_audio.mp3"
 
-        print("Extracting local audio...")
-        extract_audio(args.input, audio_path)
+            print("Extracting local audio...")
+            extract_audio(args.input, audio_path)
 
-        print("Uploading audio to transcript API...")
-        job = post_audio_for_transcript(
-            api_base_url=args.api_base_url,
-            audio_path=audio_path,
-            model_name=args.model_name,
-            language_code=args.language_code,
-            chunk_length_s=args.chunk_length_s,
-        )
+            print("Uploading audio to transcript API...")
+            job = post_audio_for_transcript(
+                api_base_url=args.api_base_url,
+                audio_path=audio_path,
+                model_name=args.model_name,
+                language_code=args.language_code,
+                chunk_length_s=args.chunk_length_s,
+            )
 
-        job_id = job["id"]
-        print(f"Queued job {job_id}, waiting for transcript...")
-        job = wait_for_job(args.api_base_url, job_id, args.poll_seconds)
-        if job.get("status") == "error":
-            raise RuntimeError(f"Transcript job failed: {job.get('error') or job.get('message')}")
+            job_id = job["id"]
+            print(f"Queued job {job_id}, waiting for transcript...")
+            job = wait_for_job(args.api_base_url, job_id, args.poll_seconds)
+            if job.get("status") == "error":
+                raise RuntimeError(f"Transcript job failed: {job.get('error') or job.get('message')}")
 
-        artifacts = job.get("artifacts", [])
-        transcript_artifact = next((item for item in artifacts if item.get("kind") == "json"), None)
-        if transcript_artifact is None:
-            raise RuntimeError("Transcript API did not return a JSON artifact")
+            artifacts = job.get("artifacts", [])
+            transcript_artifact = next((item for item in artifacts if item.get("kind") == "json"), None)
+            if transcript_artifact is None:
+                raise RuntimeError("Transcript API did not return a JSON artifact")
 
-        transcript_url = f"{args.api_base_url.rstrip('/')}{transcript_artifact['download_url']}"
-        print(f"Downloading transcript to {args.transcript_output}...")
-        download_file(transcript_url, args.transcript_output)
+            transcript_url = f"{args.api_base_url.rstrip('/')}{transcript_artifact['download_url']}"
+            print(f"Downloading transcript to {transcript_path}...")
+            download_file(transcript_url, transcript_path)
+            args.transcript_output = transcript_path
 
         print("Running local VAD trim...")
-        vad_cmd = build_vad_command(args, args.transcript_output)
+        vad_cmd = build_vad_command(args, transcript_path)
         run(vad_cmd)
 
     print(f"Done. Final video: {args.output}")
-    print(f"Transcript JSON: {args.transcript_output}")
+    print(f"Transcript JSON: {transcript_path}")
     return 0
 
 
