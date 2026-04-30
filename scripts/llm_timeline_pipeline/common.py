@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import math
 import json
 import os
+import shutil
 import socket
 import ssl
 import subprocess
@@ -145,6 +147,70 @@ def extract_audio_mp3(input_path: Path, mp3_path: Path) -> None:
         str(mp3_path),
     ]
     run(cmd)
+
+
+def build_atempo_chain(speed: float) -> str:
+    if speed <= 0:
+        raise ValueError("speed must be positive")
+
+    filters: list[str] = []
+    remaining = speed
+
+    while remaining < 0.5:
+        filters.append("atempo=0.5")
+        remaining /= 0.5
+
+    while remaining > 2.0:
+        filters.append("atempo=2.0")
+        remaining /= 2.0
+
+    if not math.isclose(remaining, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+        filters.append(f"atempo={remaining:.12f}")
+
+    return ",".join(filters) if filters else "atempo=1.0"
+
+
+def match_audio_duration(
+    input_path: Path,
+    output_path: Path,
+    *,
+    target_duration_s: float,
+    tolerance_s: float = 0.05,
+) -> None:
+    current_duration_s = media_duration(str(input_path))
+    duration_delta_s = current_duration_s - target_duration_s
+    if abs(duration_delta_s) <= tolerance_s:
+        if input_path != output_path:
+            shutil.copy2(input_path, output_path)
+        return
+
+    speed = current_duration_s / target_duration_s
+    atempo_filter = build_atempo_chain(speed)
+    temp_output = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
+        "-y",
+        "-i",
+        str(input_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-filter:a",
+        f"{atempo_filter},apad,atrim=0:{target_duration_s:.6f}",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "32k",
+        str(temp_output),
+    ]
+    run(cmd)
+    temp_output.replace(output_path)
 
 
 def build_multipart_body(fields: dict[str, str], file_field: str, file_path: Path, boundary: str) -> tuple[bytes, str]:

@@ -18,6 +18,7 @@ from common import (
     build_timeline_template,
     ensure_word_segments,
     extract_audio_mp3,
+    match_audio_duration,
     media_duration,
     print_progress,
     submit_transcript_job,
@@ -111,11 +112,17 @@ def main() -> int:
     timeline_spec = Path(__file__).resolve().with_name("TIMELINE_SPEC.md")
     manifest_json = work_dir / "stage1_manifest.json"
 
-    print_progress("Stage 1/3: Running tight VAD-only pass...")
-    subprocess.run(build_stage1_vad_command(args, stage1_video), check=True)
+    if stage1_video.exists():
+        print_progress(f"Stage 1/3: Reusing existing stage1 VAD output: {stage1_video}")
+    else:
+        print_progress("Stage 1/3: Running tight VAD-only pass...")
+        subprocess.run(build_stage1_vad_command(args, stage1_video), check=True)
+
+    duration_s = media_duration(str(stage1_video))
 
     print_progress("Stage 2/3: Extracting stage1 audio for transcript...")
     extract_audio_mp3(stage1_video, audio_mp3)
+    match_audio_duration(audio_mp3, audio_mp3, target_duration_s=duration_s)
 
     print_progress("Stage 3/3: Requesting transcript on the VAD output...")
     transcript = submit_transcript_job(
@@ -136,7 +143,6 @@ def main() -> int:
     transcript_txt.write_text(transcript_text, encoding="utf-8")
     transcript_words_txt.write_text(transcript_words_text, encoding="utf-8")
 
-    duration_s = media_duration(str(stage1_video))
     if timeline_json.exists():
         backup = timeline_json.with_suffix(".json.bak")
         shutil.copy2(timeline_json, backup)
