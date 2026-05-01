@@ -288,6 +288,22 @@ a {
   gap: 10px;
 }
 
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+}
+
 details {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -313,4 +329,3 @@ summary {
     border-bottom: 1px solid var(--line);
   }
 }
-

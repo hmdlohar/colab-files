@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <section class="panel">
+    <div class="stack">
+      <span class="pill">Tool 3</span>
+      <h2 style="margin: 0">VoxCPM Ultimate Clone</h2>
+      <p class="muted">
+        Upload a reference voice clip and synthesize new speech with VoxCPM2. If you leave the transcript blank,
+        the app will derive it from the reference audio using WhisperX before cloning.
+      </p>
+    </div>
+
+    <form class="form" action="/tools/voxcpm-ultimate-clone" method="post" enctype="multipart/form-data">
+      <div class="field">
+        <label for="reference_audio_file">Reference audio</label>
+        <input id="reference_audio_file" name="reference_audio_file" type="file" accept="audio/*" required />
+      </div>
+
+      <div class="field">
+        <label for="text">Target text</label>
+        <textarea id="text" name="text" required placeholder="Enter the new text that should be spoken in the cloned voice."></textarea>
+      </div>
+
+      <div class="field">
+        <label for="transcript">Reference transcript</label>
+        <textarea id="transcript" name="transcript" placeholder="Paste the exact transcript of the reference audio for the highest-fidelity clone. Leave blank to auto-transcribe with WhisperX."></textarea>
+      </div>
+
+      <details>
+        <summary>Generation controls</summary>
+        <div class="grid" style="margin-top: 14px">
+          <div class="field">
+            <label for="cfg_value">CFG scale</label>
+            <input id="cfg_value" name="cfg_value" type="number" step="0.1" min="0.5" max="5" value="2.8" />
+          </div>
+          <div class="field">
+            <label for="inference_timesteps">Inference steps</label>
+            <input id="inference_timesteps" name="inference_timesteps" type="number" min="4" max="30" value="15" />
+          </div>
+          <div class="field">
+            <label for="seed">Seed</label>
+            <input id="seed" name="seed" type="number" value="-1" />
+          </div>
+          <div class="field">
+            <label for="model_name">VoxCPM model</label>
+            <input id="model_name" name="model_name" type="text" value="openbmb/VoxCPM2" />
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Auto-transcript controls</summary>
+        <div class="grid" style="margin-top: 14px">
+          <div class="field">
+            <label for="whisper_model_name">Whisper model</label>
+            <input id="whisper_model_name" name="whisper_model_name" type="text" value="collabora/whisper-base-hindi" />
+          </div>
+          <div class="field">
+            <label for="language_code">Language code</label>
+            <input id="language_code" name="language_code" type="text" value="hi" />
+          </div>
+          <div class="field">
+            <label for="chunk_length_s">Chunk length, seconds</label>
+            <input id="chunk_length_s" name="chunk_length_s" type="number" min="5" max="120" value="30" />
+          </div>
+        </div>
+      </details>
+
+      <div class="grid">
+        <div class="field">
+          <label for="normalize_text">Normalize text</label>
+          <select id="normalize_text" name="normalize_text">
+            <option value="false" selected>No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="denoise_reference">Denoise reference</label>
+          <select id="denoise_reference" name="denoise_reference">
+            <option value="true" selected>Yes</option>
+            <option value="false">No</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn" type="submit">Start ultimate clone</button>
+        <a class="btn secondary" href="/">Back to tools</a>
+      </div>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h3>Output</h3>
+    <div class="stack">
+      <div class="artifact">
+        <div>
+          <strong>Generated audio</strong>
+          <div><span>High-fidelity cloned WAV from VoxCPM2</span></div>
+        </div>
+      </div>
+      <div class="artifact">
+        <div>
+          <strong>Prompt transcript</strong>
+          <div><span>Exact text used for the reference clip</span></div>
+        </div>
+      </div>
+      <div class="artifact">
+        <div>
+          <strong>Normalized reference</strong>
+          <div><span>Mono 16 kHz WAV reused for transcript and cloning</span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}

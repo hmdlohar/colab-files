@@ -4,7 +4,7 @@ Media processing workspace for upload-driven transcription and pause-shortening 
 
 ## What this project does
 
-The web app currently exposes two tools:
+The web app currently exposes three tools:
 
 1. `Audio to Transcript`
    - Upload audio
@@ -17,6 +17,13 @@ The web app currently exposes two tools:
    - Generate `transcript.json`
    - Render a shorter output video using the VAD editor
    - Download the final video and transcript
+
+3. `VoxCPM Ultimate Clone`
+   - Upload reference audio
+   - Optionally paste the exact prompt transcript
+   - Auto-transcribe with WhisperX when the transcript is omitted
+   - Generate a cloned WAV with VoxCPM2 using the ultimate cloning flow
+   - Download the generated WAV, prompt transcript, and normalized reference WAV
 
 The layout is intentionally set up as a multi-page tool hub with a persistent side menu so future scripts can be added without redesigning the app.
 
@@ -67,6 +74,7 @@ Available endpoints:
 GET  /api/tools
 POST /api/tools/audio-to-transcript
 POST /api/tools/video-to-shrinked-video
+POST /api/tools/voxcpm-ultimate-clone
 GET  /api/jobs/{job_id}
 GET  /api/jobs/{job_id}/download/{filename}
 ```
@@ -77,6 +85,7 @@ The upload endpoints accept `multipart/form-data`.
 
 - `wishperx.py` contains the WhisperX transcription helpers.
 - `vad_pause_editor.py` contains the pause-shortening and media rendering helpers.
+- `voxcpm` powers the high-fidelity voice cloning tool.
 - `app/` contains the web server, templates, static assets, and job storage.
 - `runs/` is created at runtime and is ignored by Git.
 
@@ -84,6 +93,7 @@ The upload endpoints accept `multipart/form-data`.
 
 - `requirements-web.txt` for the FastAPI shell and templates.
 - `requirements-audio.txt` for `wishperx.py` and transcript generation.
+- `requirements-audio.txt` also includes VoxCPM for TTS and ultimate cloning.
 - `requirements-video.txt` for `vad_pause_editor.py` and the shrink-video pipeline.
 - `requirements-serverless.txt` for the Runpod queue worker image.
 - `requirements.txt` as a full-stack umbrella install.
@@ -93,6 +103,8 @@ The upload endpoints accept `multipart/form-data`.
 
 - The transcription pipeline defaults to `collabora/whisper-base-hindi`.
 - The video workflow also writes a transcript JSON so the result can be reused by other scripts later.
+- The VoxCPM workflow uses the same reference clip for both `prompt_wav_path` and `reference_wav_path`.
+- If you do not provide a reference transcript, the app derives one with WhisperX before calling VoxCPM.
 - The app stores each job in its own folder under `runs/`.
 - `scripts/video_trim.py` is the local hybrid path: it extracts audio locally, calls the remote audio API, and then runs the local VAD editor.
 

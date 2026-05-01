@@ -5,4 +5,4 @@ whisperx
 soundfile
 tqdm
 numpy
-
+voxcpm

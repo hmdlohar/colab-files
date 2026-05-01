@@ -11,7 +11,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.pipelines import process_audio_to_transcript, process_video_to_shrinked_video
+from app.pipelines import (
+    process_audio_to_transcript,
+    process_video_to_shrinked_video,
+    process_voxcpm_ultimate_clone,
+)
 from app.store import Artifact, JobStore
 
 
@@ -149,6 +153,43 @@ async def enqueue_video_to_shrinked_video(
     return job_response(job.id)
 
 
+async def enqueue_voxcpm_ultimate_clone(
+    reference_audio_file: UploadFile,
+    text: str,
+    transcript: str,
+    model_name: str,
+    whisper_model_name: str,
+    language_code: str,
+    chunk_length_s: int,
+    cfg_value: float,
+    inference_timesteps: int,
+    normalize_text: bool,
+    denoise_reference: bool,
+    seed: int,
+) -> dict:
+    ensure_dirs()
+    job = create_job("voxcpm-ultimate-clone", safe_filename(reference_audio_file.filename), "Queued VoxCPM ultimate clone")
+    upload_path = UPLOADS_DIR / job.id / safe_filename(reference_audio_file.filename)
+    await save_upload(reference_audio_file, upload_path)
+    EXECUTOR.submit(
+        run_voxcpm_ultimate_clone_job,
+        job.id,
+        upload_path,
+        text,
+        transcript,
+        model_name,
+        whisper_model_name,
+        language_code,
+        chunk_length_s,
+        cfg_value,
+        inference_timesteps,
+        normalize_text,
+        denoise_reference,
+        seed,
+    )
+    return job_response(job.id)
+
+
 def run_audio_job(
     job_id: str,
     input_path: Path,
@@ -227,6 +268,48 @@ def run_video_job(
         JOB_STORE.update(job_id, status="error", message="Video pipeline failed", error=str(exc))
 
 
+def run_voxcpm_ultimate_clone_job(
+    job_id: str,
+    reference_audio_path: Path,
+    text: str,
+    transcript: str,
+    model_name: str,
+    whisper_model_name: str,
+    language_code: str,
+    chunk_length_s: int,
+    cfg_value: float,
+    inference_timesteps: int,
+    normalize_text: bool,
+    denoise_reference: bool,
+    seed: int,
+) -> None:
+    try:
+        message = "Preparing reference audio"
+        if not transcript.strip():
+            message = "Transcribing reference audio with WhisperX"
+        JOB_STORE.update(job_id, status="running", message=message)
+        artifacts = process_voxcpm_ultimate_clone(
+            JOB_STORE,
+            job_id,
+            reference_audio_path,
+            text=text,
+            transcript=transcript,
+            model_name=model_name,
+            whisper_model_name=whisper_model_name,
+            language_code=language_code,
+            chunk_length_s=chunk_length_s,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+            normalize_text=normalize_text,
+            denoise_reference=denoise_reference,
+            seed=(None if seed < 0 else seed),
+            device=device_name(),
+        )
+        JOB_STORE.update(job_id, status="done", message="VoxCPM ultimate clone ready", artifacts=artifacts)
+    except Exception as exc:
+        JOB_STORE.update(job_id, status="error", message="VoxCPM ultimate clone failed", error=str(exc))
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_dirs()
@@ -245,6 +328,12 @@ def index(request: Request):
             "slug": "video-to-shrinked-video",
             "title": "Video to Shrinked Video",
             "description": "Upload video, transcribe it, and produce a shorter cut plus transcript.",
+            "status": "active",
+        },
+        {
+            "slug": "voxcpm-ultimate-clone",
+            "title": "VoxCPM Ultimate Clone",
+            "description": "Upload a reference voice clip and synthesize new speech with high-fidelity cloning.",
             "status": "active",
         },
         {
@@ -292,6 +381,17 @@ def video_tool(request: Request):
     )
 
 
+@app.get("/tools/voxcpm-ultimate-clone", response_class=HTMLResponse)
+def voxcpm_ultimate_clone_tool(request: Request):
+    return templates.TemplateResponse(
+        "tool_voxcpm.html",
+        {
+            "request": request,
+            "title": "VoxCPM Ultimate Clone",
+        },
+    )
+
+
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_page(request: Request, job_id: str):
     job = JOB_STORE.get(job_id)
@@ -313,6 +413,7 @@ def api_tools():
         "tools": [
             {"slug": "audio-to-transcript", "title": "Audio to Transcript"},
             {"slug": "video-to-shrinked-video", "title": "Video to Shrinked Video"},
+            {"slug": "voxcpm-ultimate-clone", "title": "VoxCPM Ultimate Clone"},
         ]
     }
 
@@ -405,6 +506,39 @@ async def api_video_to_shrinked_video(
     )
 
 
+@app.post("/api/tools/voxcpm-ultimate-clone")
+async def api_voxcpm_ultimate_clone(
+    reference_audio_file: UploadFile = File(...),
+    text: str = Form(...),
+    transcript: str = Form(""),
+    model_name: str = Form("openbmb/VoxCPM2"),
+    whisper_model_name: str = Form("collabora/whisper-base-hindi"),
+    language_code: str = Form("hi"),
+    chunk_length_s: int = Form(30),
+    cfg_value: float = Form(2.8),
+    inference_timesteps: int = Form(15),
+    normalize_text: bool = Form(False),
+    denoise_reference: bool = Form(True),
+    seed: int = Form(-1),
+):
+    return JSONResponse(
+        await enqueue_voxcpm_ultimate_clone(
+            reference_audio_file=reference_audio_file,
+            text=text,
+            transcript=transcript,
+            model_name=model_name,
+            whisper_model_name=whisper_model_name,
+            language_code=language_code,
+            chunk_length_s=chunk_length_s,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+            normalize_text=normalize_text,
+            denoise_reference=denoise_reference,
+            seed=seed,
+        )
+    )
+
+
 @app.post("/tools/audio-to-transcript", response_class=HTMLResponse)
 async def submit_audio_tool(
     request: Request,
@@ -467,5 +601,38 @@ async def submit_video_tool(
         video_preset=video_preset,
         video_crf=video_crf,
         audio_bitrate=audio_bitrate,
+    )
+    return RedirectResponse(url=f"/jobs/{job['id']}", status_code=303)
+
+
+@app.post("/tools/voxcpm-ultimate-clone", response_class=HTMLResponse)
+async def submit_voxcpm_ultimate_clone_tool(
+    request: Request,
+    reference_audio_file: UploadFile = File(...),
+    text: str = Form(...),
+    transcript: str = Form(""),
+    model_name: str = Form("openbmb/VoxCPM2"),
+    whisper_model_name: str = Form("collabora/whisper-base-hindi"),
+    language_code: str = Form("hi"),
+    chunk_length_s: int = Form(30),
+    cfg_value: float = Form(2.8),
+    inference_timesteps: int = Form(15),
+    normalize_text: bool = Form(False),
+    denoise_reference: bool = Form(True),
+    seed: int = Form(-1),
+):
+    job = await enqueue_voxcpm_ultimate_clone(
+        reference_audio_file=reference_audio_file,
+        text=text,
+        transcript=transcript,
+        model_name=model_name,
+        whisper_model_name=whisper_model_name,
+        language_code=language_code,
+        chunk_length_s=chunk_length_s,
+        cfg_value=cfg_value,
+        inference_timesteps=inference_timesteps,
+        normalize_text=normalize_text,
+        denoise_reference=denoise_reference,
+        seed=seed,
     )
     return RedirectResponse(url=f"/jobs/{job['id']}", status_code=303)
