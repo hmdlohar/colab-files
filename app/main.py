@@ -25,6 +25,12 @@ RUNS_DIR = BASE_DIR / "runs"
 UPLOADS_DIR = RUNS_DIR / "uploads"
 JOB_STORE = JobStore(RUNS_DIR / "jobs")
 EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("COLAB_FILES_WORKERS", "1")))
+DEFAULT_VOXCPM_REFERENCE_AUDIO = str(APP_DIR / "assets" / "voxcpm-default-reference.wav")
+DEFAULT_VOXCPM_REFERENCE_TRANSCRIPT = (
+    "आज हम देखने वाले हैं डीप सीक बी फोर के बारे में। "
+    "एक्चुअली हम टेस्ट करने वाले हैं वो कैसा काम करता है क्या उसकी जो हाइक बनी हुई है "
+    "वो सही है की नहीं है"
+)
 
 app = FastAPI(title="Colab Files", version="0.1.0")
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -154,7 +160,8 @@ async def enqueue_video_to_shrinked_video(
 
 
 async def enqueue_voxcpm_ultimate_clone(
-    reference_audio_file: UploadFile,
+    reference_audio_file: UploadFile | None,
+    reference_audio_path: str,
     text: str,
     transcript: str,
     model_name: str,
@@ -168,13 +175,20 @@ async def enqueue_voxcpm_ultimate_clone(
     seed: int,
 ) -> dict:
     ensure_dirs()
-    job = create_job("voxcpm-ultimate-clone", safe_filename(reference_audio_file.filename), "Queued VoxCPM ultimate clone")
-    upload_path = UPLOADS_DIR / job.id / safe_filename(reference_audio_file.filename)
-    await save_upload(reference_audio_file, upload_path)
+    input_name = Path(reference_audio_path).name
+    resolved_reference_path = Path(reference_audio_path)
+    if reference_audio_file is not None and reference_audio_file.filename:
+        input_name = safe_filename(reference_audio_file.filename)
+    job = create_job("voxcpm-ultimate-clone", input_name, "Queued VoxCPM ultimate clone")
+    if reference_audio_file is not None and reference_audio_file.filename:
+        resolved_reference_path = UPLOADS_DIR / job.id / safe_filename(reference_audio_file.filename)
+        await save_upload(reference_audio_file, resolved_reference_path)
+    elif not resolved_reference_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Default reference audio not found: {reference_audio_path}")
     EXECUTOR.submit(
         run_voxcpm_ultimate_clone_job,
         job.id,
-        upload_path,
+        resolved_reference_path,
         text,
         transcript,
         model_name,
@@ -388,6 +402,8 @@ def voxcpm_ultimate_clone_tool(request: Request):
         {
             "request": request,
             "title": "VoxCPM Ultimate Clone",
+            "default_reference_audio_path": DEFAULT_VOXCPM_REFERENCE_AUDIO,
+            "default_reference_transcript": DEFAULT_VOXCPM_REFERENCE_TRANSCRIPT,
         },
     )
 
@@ -508,9 +524,10 @@ async def api_video_to_shrinked_video(
 
 @app.post("/api/tools/voxcpm-ultimate-clone")
 async def api_voxcpm_ultimate_clone(
-    reference_audio_file: UploadFile = File(...),
+    reference_audio_file: UploadFile | None = File(None),
+    reference_audio_path: str = Form(DEFAULT_VOXCPM_REFERENCE_AUDIO),
     text: str = Form(...),
-    transcript: str = Form(""),
+    transcript: str = Form(DEFAULT_VOXCPM_REFERENCE_TRANSCRIPT),
     model_name: str = Form("openbmb/VoxCPM2"),
     whisper_model_name: str = Form("collabora/whisper-base-hindi"),
     language_code: str = Form("hi"),
@@ -524,6 +541,7 @@ async def api_voxcpm_ultimate_clone(
     return JSONResponse(
         await enqueue_voxcpm_ultimate_clone(
             reference_audio_file=reference_audio_file,
+            reference_audio_path=reference_audio_path,
             text=text,
             transcript=transcript,
             model_name=model_name,
@@ -608,9 +626,10 @@ async def submit_video_tool(
 @app.post("/tools/voxcpm-ultimate-clone", response_class=HTMLResponse)
 async def submit_voxcpm_ultimate_clone_tool(
     request: Request,
-    reference_audio_file: UploadFile = File(...),
+    reference_audio_file: UploadFile | None = File(None),
+    reference_audio_path: str = Form(DEFAULT_VOXCPM_REFERENCE_AUDIO),
     text: str = Form(...),
-    transcript: str = Form(""),
+    transcript: str = Form(DEFAULT_VOXCPM_REFERENCE_TRANSCRIPT),
     model_name: str = Form("openbmb/VoxCPM2"),
     whisper_model_name: str = Form("collabora/whisper-base-hindi"),
     language_code: str = Form("hi"),
@@ -623,6 +642,7 @@ async def submit_voxcpm_ultimate_clone_tool(
 ):
     job = await enqueue_voxcpm_ultimate_clone(
         reference_audio_file=reference_audio_file,
+        reference_audio_path=reference_audio_path,
         text=text,
         transcript=transcript,
         model_name=model_name,

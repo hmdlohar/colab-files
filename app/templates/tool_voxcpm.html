@@ -14,7 +14,18 @@
     <form class="form" action="/tools/voxcpm-ultimate-clone" method="post" enctype="multipart/form-data">
       <div class="field">
         <label for="reference_audio_file">Reference audio</label>
-        <input id="reference_audio_file" name="reference_audio_file" type="file" accept="audio/*" required />
+        <input id="reference_audio_file" name="reference_audio_file" type="file" accept="audio/*" />
+        <div class="note">Optional. If you do not upload a file, the default server-side reference below will be used.</div>
+      </div>
+
+      <div class="field">
+        <label for="reference_audio_path">Default reference audio path</label>
+        <input
+          id="reference_audio_path"
+          name="reference_audio_path"
+          type="text"
+          value="{{ default_reference_audio_path }}"
+        />
       </div>
 
       <div class="field">
@@ -24,7 +35,7 @@
 
       <div class="field">
         <label for="transcript">Reference transcript</label>
-        <textarea id="transcript" name="transcript" placeholder="Paste the exact transcript of the reference audio for the highest-fidelity clone. Leave blank to auto-transcribe with WhisperX."></textarea>
+        <textarea id="transcript" name="transcript" placeholder="Paste the exact transcript of the reference audio for the highest-fidelity clone. Leave blank to auto-transcribe with WhisperX.">{{ default_reference_transcript }}</textarea>
       </div>
 
       <details>

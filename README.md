@@ -103,6 +103,7 @@ The upload endpoints accept `multipart/form-data`.
 
 - The transcription pipeline defaults to `collabora/whisper-base-hindi`.
 - The video workflow also writes a transcript JSON so the result can be reused by other scripts later.
+- The default VoxCPM reference audio is stored in-repo at `app/assets/voxcpm-default-reference.wav`.
 - The VoxCPM workflow uses the same reference clip for both `prompt_wav_path` and `reference_wav_path`.
 - If you do not provide a reference transcript, the app derives one with WhisperX before calling VoxCPM.
 - The app stores each job in its own folder under `runs/`.
