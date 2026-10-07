@@ -17,7 +17,7 @@ This repository is a small media-processing workspace with a web front end and t
 - Put generated files under `runs/` and keep that directory ignored.
 - Reuse the existing pipeline helpers instead of re-implementing media logic in the web layer.
 - Preserve CLI usability when extending a script so it can still be run outside the server.
-- For the staged video-tightening flow, use [skills/llm-timeline-agent/SKILL.md](/media/hyper2/HYPER/projects/node/colab-files/skills/llm-timeline-agent/SKILL.md) when the task is: run stage1, prepare `timeline.json` from the generated prompt/transcript artifacts, then run stage2.
+- To edit a recorded video for YouTube in one step (stage1 → timeline.json → stage2), follow `skills/llm-timeline-agent/SKILL.md`. Trigger: the user gives a source video or folder path and asks to edit/tighten/prepare it for YouTube.
 
 ## Adding a New Tool
 
